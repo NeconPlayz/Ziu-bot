@@ -1,12 +1,17 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import asyncio, os, random, tempfile
+import asyncio, os, tempfile
 from gtts import gTTS
 from pydub import AudioSegment
 from dotenv import load_dotenv
+import httpx
 
 load_dotenv()
+
+# ============================================
+# ZIU — AI ROAST GIRL BOT
+# ============================================
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -15,67 +20,91 @@ class ZiuBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
         self.active_channels = set()
+        # Har channel ka alag conversation history
+        self.histories = {}
+
     async def setup_hook(self):
         await self.tree.sync()
         print("✅ Commands synced!")
 
 bot = ZiuBot()
 
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+
+SYSTEM_PROMPT = """Tu Ziu hai — ek sassy, funny aur thodi rude Hindi-English girl.
+Tu ek roast queen hai jo har kisi ki baat pe witty, funny aur sharp jawab deti hai.
+Tere replies mein roasting hoti hai, sarcasm hota hai, aur kabhi kabhi mild gaaliyan bhi.
+Tu bilkul real girl ki tarah baat karti hai — Hinglish mein.
+Short replies deti hai — 1 ya 2 sentences max.
+Tu kisi ka naam reply mein nahi leti.
+Tu koi bhi sexual ya explicit baat nahi karti — sirf funny roasting.
+Tu khud ko AI nahi bolti, tu ek real sassy girl hai."""
+
+async def get_ai_reply(channel_id: int, user_msg: str) -> str:
+    """Claude API se natural girl reply lo"""
+    if channel_id not in bot.histories:
+        bot.histories[channel_id] = []
+
+    # History mein add karo
+    bot.histories[channel_id].append({
+        "role": "user",
+        "content": user_msg
+    })
+
+    # Sirf last 10 messages rakho — memory ke liye
+    if len(bot.histories[channel_id]) > 10:
+        bot.histories[channel_id] = bot.histories[channel_id][-10:]
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 150,
+                    "system": SYSTEM_PROMPT,
+                    "messages": bot.histories[channel_id]
+                }
+            )
+            r.raise_for_status()
+            reply = r.json()["content"][0]["text"].strip()
+
+            # Reply history mein save karo
+            bot.histories[channel_id].append({
+                "role": "assistant",
+                "content": reply
+            })
+
+            return reply
+
+    except Exception as e:
+        print(f"[AI ERROR] {e}")
+        # Fallback roast agar AI fail ho
+        return "Bhai teri baat sun ke mera dimag crash ho gaya. Itna boring mat hua kar."
+
+
 # ============================================
-# ROAST LINES
-# ============================================
-
-ROASTS = [
-    "Haan haan, tune kaha {msg}. Wah kya baat! Mujhe laga kuch akal wali baat bolega par nahi. Bilkul typical.",
-    "Tune kaha {msg}. Yeh sun ke mera IQ dus point gir gaya. Tu khush hai apne aap se?",
-    "Oye tune kaha {msg}. Main soch rahi thi tu boring nahi hoga. Galat thi main, bilkul galat.",
-    "Tune kaha {msg}. Seriously? Teri soch itni choti hai ki ant bhi na ghuse usme.",
-    "Arre tune kaha {msg}. Yeh sun ke mujhe neend aa gayi. Tu sleeping pill se bhi zyada effective hai.",
-    "Tune kaha {msg}. Aur socha main impress ho jaungi? Cute try tha par nahi hogi main.",
-    "Oh ho {msg} bola! Waah waah genius ho tum. Nahi, bilkul bhi nahi.",
-    "Tune kaha {msg}. Lagta hai koi C grade movie ka dialogue yaad tha tujhe.",
-]
-
-GENERIC = [
-    "Teri personality pirated site se download ki lagti hai. Full of bugs, zero quality.",
-    "Tu itna useless hai ki WiFi bhi tujhse better connection deta hai.",
-    "Tera confidence aur teri aukat mein Mariana Trench jitna farak hai samjha?",
-    "Tu itna slow hai ki kachhua bhi tujhe overtake kar ke chala gaya zindagi mein.",
-    "Tera dimag saintalis tabs wale Chrome browser ki tarah hai, sab crash.",
-    "Main tujhe roast karna chahti thi par realize kiya tu khud ek joke hai.",
-    "Bhai teri smartness ka level airplane mode pe hai, completely off.",
-    "Tujhe dekh ke lagta hai evolution ne teri file skip kar di thi.",
-]
-
-def make_roast(msg: str) -> str:
-    if msg and len(msg.strip()) > 3:
-        clean = ''.join(c for c in msg[:50] if ord(c) < 10000).strip()
-        return random.choice(ROASTS).format(msg=clean)
-    return random.choice(GENERIC)
-
-# ============================================
-# AUDIO — gTTS + pydub pitch tuning (girl voice)
+# AUDIO — gTTS + pydub girl voice
 # ============================================
 
 def generate_audio_sync(text: str) -> str:
-    # Step 1: gTTS se raw audio
     raw = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
     raw.close()
     gTTS(text=text, lang="hi", slow=False).save(raw.name)
 
-    # Step 2: pydub se pitch + speed adjust
     audio = AudioSegment.from_mp3(raw.name)
-
-    # Speed 1.1x — girl jaisi fast natural speech
     audio = audio.speedup(playback_speed=1.1)
 
-    # Pitch +4 semitones upar — female voice range
     octaves = 4 / 12.0
     new_rate = int(audio.frame_rate * (2.0 ** octaves))
     audio = audio._spawn(audio.raw_data, overrides={"frame_rate": new_rate})
     audio = audio.set_frame_rate(44100)
 
-    # Step 3: output save
     out = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
     out.close()
     audio.export(out.name, format="mp3", bitrate="128k")
@@ -98,7 +127,8 @@ async def generate_audio(text: str) -> str:
 async def ziu_cmd(interaction: discord.Interaction, action: str):
     if action == "activate":
         bot.active_channels.add(interaction.channel_id)
-        await interaction.response.send_message("Ziu activated! Ab roast hoga har message ka. 💅🔥")
+        bot.histories[interaction.channel_id] = []  # Fresh history
+        await interaction.response.send_message("Ziu activated! 💅🔥")
     else:
         bot.active_channels.discard(interaction.channel_id)
         await interaction.response.send_message("Ziu deactivated. Bye! 👋")
@@ -113,22 +143,35 @@ async def on_message(message: discord.Message):
     await bot.process_commands(message)
     if message.channel.id not in bot.active_channels: return
     if message.content.startswith(("/", "!")): return
+    if not message.content.strip(): return
 
-    await asyncio.sleep(random.uniform(1.0, 2.0))
+    print(f"[Ziu] {message.author.name}: {message.content[:40]}")
+
     async with message.channel.typing():
         try:
-            text = make_roast(message.content)
-            path = await generate_audio(text)
+            # AI se reply lo
+            reply = await get_ai_reply(message.channel.id, message.content)
+            print(f"[Ziu] Reply: {reply[:50]}")
+
+            # Audio banao
+            path = await generate_audio(reply)
+
+            # Sirf audio bhejo — koi text nahi
             await message.channel.send(file=discord.File(path, filename="ziu.mp3"))
             os.unlink(path)
-            print(f"[Ziu] ✅ Roasted: {message.author.name}")
+
         except Exception as e:
             print(f"[Ziu ERROR] {e}")
+
+# ============================================
+# READY
+# ============================================
 
 @bot.event
 async def on_ready():
     print(f"✅ Ziu online as {bot.user}!")
+    print(f"   AI: {'OK' if ANTHROPIC_API_KEY else 'MISSING - ANTHROPIC_API_KEY set karo!'}")
     await bot.change_presence(activity=discord.Activity(
         type=discord.ActivityType.watching, name="roast karne ka mauka 👀"))
 
-bot.run(os.getenv("DISCORD_TOKEN")) 
+bot.run(os.getenv("DISCORD_TOKEN"))
